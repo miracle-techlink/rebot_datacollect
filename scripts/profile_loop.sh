@@ -26,4 +26,5 @@ exec "$PY" "$SCRIPT_DIR/profile_loop.py" \
   "${CAM_ARG[@]}" \
   --teleop.type=starai_to_rebot_leader --teleop.port="${LEADER_PORT}" \
   --teleop.id=rebot_leader --teleop.leader_id=leader1 \
-  --dataset.repo_id=profile/tmp --dataset.single_task=profile
+  --dataset.repo_id=profile/tmp --dataset.single_task=profile \
+  --dataset.rgb_encoder.vcodec=h264   # RecordConfig 解析需要,profiler 不建数据集但要能解析
