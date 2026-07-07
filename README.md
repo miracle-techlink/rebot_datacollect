@@ -82,6 +82,7 @@ PY=/path/to/env/python CAN=<canX> FRONT_CAM=/dev/videoN \
 | `scripts/setup_rebot_can.sh` | 拉起 PCAN CAN 总线(自动找接口) |
 | `scripts/maxn_lock.sh` | Jetson MAXN + 锁频(Tier-0 性能) |
 | `scripts/usbreset_orbbec.py` | Orbbec 卡死时 USB 复位(免拔插) |
+| `scripts/estop_release.sh` | 软停:进程被 -9 硬杀后一键给 reBot 电机卸力矩(手臂变软;需总线在线) |
 
 ## 数据集内容
 
