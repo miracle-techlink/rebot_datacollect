@@ -60,6 +60,12 @@ class OrbbecCameraConfig(CameraConfig):
     use_rgb: bool = True
     use_depth: bool = False
     align_to_color: bool = True
+    # How to do Depth-to-Color alignment when ``align_to_color`` is set:
+    #   "sw" - software AlignFilter on the host CPU (default; works everywhere).
+    #   "hw" - hardware D2C on the camera's depth ASIC (offloads the host CPU, lower
+    #          latency). Needs device + firmware support for the chosen profile; if the
+    #          stream fails to start, fall back to "sw". Gemini 305 exposes HW_MODE.
+    align_mode: str = "sw"
     # On-wire color format requested from the device:
     #   "auto" - prefer uncompressed RGB, then MJPG/YUYV/BGR (good on USB3).
     #   "mjpg" - force JPEG-compressed color. REQUIRED for higher-res/fps color+depth

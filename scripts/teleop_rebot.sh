@@ -24,7 +24,8 @@ CAM_ARG=()
 if [ "${NO_CAM:-0}" != "1" ]; then
   # USB2 链路务必 color_format: mjpg;深度会对齐进彩色帧(640x480)。想 30Hz 深度请把 Orbbec 插到 USB3 口。
   # front 用 v4l2 后端(默认 ANY 后端会让 set(width) 返回 False 而报错)+ MJPG(省 USB2 带宽)
-  CAMS="{ wrist: {type: orbbec, serial_number_or_name: ${WRIST_CAM}, fps: 30, width: 640, height: 480, color_format: mjpg, use_depth: ${USE_DEPTH}, warmup_s: ${WARMUP:-15}}, front: {type: opencv, index_or_path: ${FRONT_CAM}, fps: 30, width: 640, height: 480, backend: V4L2, fourcc: MJPG} }"
+  # CAM_FORMAT(默认 mjpg;USB3 可用 rgb 免解码)/ ALIGN_MODE(默认 sw;hw=硬件 D2C 卸 CPU)
+  CAMS="{ wrist: {type: orbbec, serial_number_or_name: ${WRIST_CAM}, fps: 30, width: 640, height: 480, color_format: ${CAM_FORMAT:-mjpg}, use_depth: ${USE_DEPTH}, align_mode: ${ALIGN_MODE:-sw}, warmup_s: ${WARMUP:-15}}, front: {type: opencv, index_or_path: ${FRONT_CAM}, fps: 30, width: 640, height: 480, backend: V4L2, fourcc: MJPG} }"
   CAM_ARG=(--robot.cameras="${CAMS}")
 fi
 

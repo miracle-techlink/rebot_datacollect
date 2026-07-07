@@ -100,6 +100,7 @@ class OrbbecCamera(Camera):
         self.use_rgb = config.use_rgb
         self.use_depth = config.use_depth
         self.align_to_color = config.align_to_color
+        self.align_mode = getattr(config, "align_mode", "sw")
         self.color_format = config.color_format
         self.warmup_s = config.warmup_s
 
@@ -250,6 +251,15 @@ class OrbbecCamera(Camera):
         if self.use_rgb and self.use_depth:
             cfg.set_frame_aggregate_output_mode(ob.OBFrameAggregateOutputMode.FULL_FRAME_REQUIRE)
 
+        # Hardware D2C: align on the depth ASIC (frees the host CPU). Requested here so the
+        # SDK negotiates a HW-alignable profile; the software AlignFilter is then skipped.
+        if self.use_rgb and self.use_depth and self.align_to_color and self.align_mode == "hw":
+            try:
+                cfg.set_align_mode(ob.OBAlignMode.HW_MODE)
+            except Exception as e:
+                logger.warning(f"{self} hardware D2C not available ({e}); falling back to software align.")
+                self.align_mode = "sw"
+
         return cfg
 
     @check_if_already_connected
@@ -258,7 +268,8 @@ class OrbbecCamera(Camera):
         self.pipeline = ob.Pipeline(device)
         cfg = self._build_config(self.pipeline)
 
-        if self.use_depth and self.use_rgb and self.align_to_color:
+        # Software D2C only when not doing hardware alignment (HW_MODE aligns in-SDK).
+        if self.use_depth and self.use_rgb and self.align_to_color and self.align_mode != "hw":
             self.align_filter = ob.AlignFilter(align_to_stream=ob.OBStreamType.COLOR_STREAM)
 
         try:

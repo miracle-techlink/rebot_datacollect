@@ -96,6 +96,31 @@ PY=/path/to/env/python CAN=<canX> FRONT_CAM=/dev/videoN \
 - **`Unsupported video codec: libsvtav1`**:某些 pyav 构建没有 svtav1。脚本已默认 `--dataset.rgb_encoder.vcodec=h264`(深度用 hevc)。
 - **record loop < 30Hz**:先 `maxn_lock.sh`;把 Orbbec 挪 USB3、CAN/主臂串口与相机分开 USB 控制器;批量录制可 `--display_data=false`。
 
+## 性能优化(采集循环稳到 30Hz)
+
+采集是固定时间预算(30Hz=33.3ms/帧)的实时循环,掉到 27-28Hz 会丢帧。按性价比分层:
+
+**先测,别猜** —— 用打点脚本定位真瓶颈(get_observation / get_action / send_action 各占多少 ms):
+```bash
+PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN bash scripts/profile_loop.sh
+```
+
+| Tier | 做法 | 命令 / 开关 | 风险 |
+|---|---|---|---|
+| **0 系统** | Jetson MAXN + 锁频,消 DVFS 抖动 | `sudo bash scripts/maxn_lock.sh` | 无。**最先做,常常一步到位** |
+| **1 USB 拓扑** | 相机与 CAN/主臂串口**分开 USB 控制器**(相机挪独立 USB3 口),别共用一个 USB2 hub | `python scripts/check_usb.py` 体检 + 物理换口 | 无 |
+| **2 软件** | 批量录制关 rerun / 流式编码搬离主循环 | `NO_DISPLAY=1`、`STREAM_ENCODE=1 [ENC_THREADS=2]` | 无(官方参数) |
+| **3 相机** | USB3 上彩色去 mjpg 免解码;深度用硬件 D2C 卸 CPU | `CAM_FORMAT=rgb`、`ALIGN_MODE=hw` | 低(需设备支持;失败自动回退 sw) |
+
+示例(USB3 全优化 + 关显示批量录):
+```bash
+PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN \
+  REPO_ID=... TASK="..." NO_DISPLAY=1 STREAM_ENCODE=1 CAM_FORMAT=rgb ALIGN_MODE=hw \
+  bash scripts/record_rebot_gated.sh
+```
+
+> 注:`ALIGN_MODE=hw`(硬件 D2C)与 `CAM_FORMAT=rgb` 属**可选加速项**,需设备/固件支持,建议先 `teleop_rebot.sh` 带这俩开关空跑验证深度对齐正常、再用于录制。硬件 D2C 不支持时插件会告警并自动回退软件对齐。
+
 ## 许可
 
 插件基于 Apache-2.0(沿用 LeRobot / HuggingFace 头)。
