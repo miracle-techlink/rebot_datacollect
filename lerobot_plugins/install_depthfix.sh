@@ -7,6 +7,8 @@
 #   1) depth_utils.py  编码:用 VideoFrame 构造器 + write_u16_plane 建帧(替 from_ndarray)
 #   2) video_utils.py  解码:手动读 u16 plane(替 to_ndarray(gray12le))
 #   3) video_utils.py  get_video_info:Codec 无 canonical_name 时回退 .name(否则 save_episode 崩)
+#   4) video_utils.py  concatenate_video_files:无 add_stream_from_template 时用 add_stream(template=)
+#      (第 2 条 episode 起拼接视频块时触发)
 # 已验证:hevc/gray12le/mp4 端到端 round-trip 正常,深度误差=纯 12-bit 量化(~1mm),无编码损失。
 # lerobot 升级会覆盖核心文件 → 升级后重跑本脚本。
 #
@@ -66,5 +68,17 @@ patch("datasets/video_utils.py",
       '        audio_info["audio.codec"] = audio_stream.codec.canonical_name',
       '        audio_info["audio.codec"] = getattr(audio_stream.codec, "canonical_name", None) or audio_stream.codec.name',
       marker='getattr(audio_stream.codec, "canonical_name"')
+
+# 4) concatenate_video_files: 老 pyav 没有 add_stream_from_template → 用 add_stream(template=) 拼接
+patch("datasets/video_utils.py",
+'''            stream_map[input_stream.index] = output_container.add_stream_from_template(
+                template=input_stream, opaque=True
+            )''',
+'''            stream_map[input_stream.index] = (
+                output_container.add_stream_from_template(template=input_stream, opaque=True)
+                if hasattr(output_container, "add_stream_from_template")
+                else output_container.add_stream(template=input_stream)
+            )''',
+    marker='hasattr(output_container, "add_stream_from_template")')
 PY
 echo "[depthfix] 完成。带深度录制若之前崩在 save_episode/gray12le,现在应正常。"
