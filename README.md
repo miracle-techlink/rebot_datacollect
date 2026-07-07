@@ -38,6 +38,8 @@ pip install fashionstar-uart-servo            # StarAI Violin 主臂舵机(userv
 LEROBOT_SRC=/path/to/lerobot bash lerobot_plugins/install.sh
 # 2) 装 Orbbec 相机插件(录深度用)
 LEROBOT_SRC=/path/to/lerobot bash lerobot_plugins/install_orbbec.sh
+# 3) 深度编码修复(若 pyav 不支持 gray12le 的 numpy 转换,带深度录制会崩在 save_episode)
+LEROBOT_SRC=/path/to/lerobot bash lerobot_plugins/install_depthfix.sh
 ```
 > 注:插件是「拷进 lerobot 源码树」的方式,lerobot 升级会覆盖,升级后重跑 install。
 
@@ -94,6 +96,7 @@ PY=/path/to/env/python CAN=<canX> FRONT_CAM=/dev/videoN \
 - **Orbbec 抓帧超时 / 卡死**:多为反复启停后管线卡死。`python scripts/usbreset_orbbec.py` 复位后重试;根治是插 **USB3 口**。
 - **`can*` / `/dev/video*` 号变了**:USB 重新枚举会漂。`setup_rebot_can.sh` 自动找 PCAN 接口;相机用 `motorbridge-cli` / `v4l2-ctl --list-devices` 重认。
 - **`Unsupported video codec: libsvtav1`**:某些 pyav 构建没有 svtav1。脚本已默认 `--dataset.rgb_encoder.vcodec=h264`(深度用 hevc)。
+- **`Conversion ... format 'gray12le' is not yet supported`**(带深度录制崩在 `save_episode`):这台 pyav 不支持 gray12le 的 numpy 转换。跑 `bash lerobot_plugins/install_depthfix.sh` 打补丁(编码用构造器、解码手动读 plane,保持 gray12le/hevc/mp4 无损)。lerobot 升级会覆盖 → 重跑该脚本。
 - **record loop < 30Hz**:先 `maxn_lock.sh`;把 Orbbec 挪 USB3、CAN/主臂串口与相机分开 USB 控制器;批量录制可 `--display_data=false`。
 
 ## 性能优化(采集循环稳到 30Hz)
