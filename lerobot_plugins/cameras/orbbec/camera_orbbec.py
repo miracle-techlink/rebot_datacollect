@@ -264,6 +264,30 @@ class OrbbecCamera(Camera):
 
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
+        # Self-heal: if the device is wedged (a prior crash leaked its stream session so
+        # warmup gets no frames), USB-reset it and retry, instead of just failing.
+        retries = max(0, int(getattr(self.config, "reset_retries", 1))) if getattr(
+            self.config, "reset_on_stall", True
+        ) else 0
+        last_err: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                self._open_once()
+                return
+            except ConnectionError as e:
+                last_err = e
+                self._cleanup_partial()
+                if attempt < retries:
+                    logger.warning(
+                        f"{self} connect stalled ({e}); USB-resetting the camera and retrying "
+                        f"({attempt + 1}/{retries})..."
+                    )
+                    self._usb_reset()
+                    time.sleep(3.0)  # 等设备重新枚举
+        assert last_err is not None
+        raise last_err
+
+    def _open_once(self) -> None:
         device = self._find_device()
         self.pipeline = ob.Pipeline(device)
         cfg = self._build_config(self.pipeline)
@@ -302,13 +326,67 @@ class OrbbecCamera(Camera):
             time.sleep(0.05)
 
         if not _ready():
-            self.disconnect()
             raise ConnectionError(
-                f"{self} failed to capture frames within {ceiling_s:.0f}s. On a USB2 link, try "
-                f"color_format='mjpg' and a lower resolution/fps; otherwise use a USB3 port."
+                f"{self} failed to capture frames within {ceiling_s:.0f}s "
+                f"(likely a leaked stream session from a prior crash; a USB reset recovers it)."
             )
 
         logger.info(f"{self} connected (color={self.use_rgb}, depth={self.use_depth}).")
+
+    def _cleanup_partial(self) -> None:
+        """Tear down a half-open attempt without the connected-state guards (for retry)."""
+        try:
+            self._stop_read_thread()
+        except Exception:
+            pass
+        if self.pipeline is not None:
+            try:
+                self.pipeline.stop()
+            except Exception:
+                pass
+            self.pipeline = None
+        self.align_filter = None
+        with self.frame_lock:
+            self.latest_color_frame = None
+            self.latest_depth_frame = None
+            self.latest_timestamp = None
+            self.new_frame_event.clear()
+
+    def _usb_reset(self) -> None:
+        """Force a USB port reset of the Orbbec device to clear a leaked stream session left
+        by an abnormally-terminated prior process. No sudo if udev grants /dev/bus/usb access
+        (install_orbbec.sh). Also drops the shared SDK context so the next query re-enumerates."""
+        global _shared_context
+        import fcntl
+        import glob
+        import os
+
+        USBDEVFS_RESET = ord("U") << 8 | 20  # _IO('U', 20)
+        n = 0
+        for d in glob.glob("/sys/bus/usb/devices/*"):
+            try:
+                vid = open(os.path.join(d, "idVendor")).read().strip()
+            except OSError:
+                continue
+            if vid.lower() != "2bc5":  # Orbbec vendor id
+                continue
+            try:
+                busnum = int(open(os.path.join(d, "busnum")).read())
+                devnum = int(open(os.path.join(d, "devnum")).read())
+                node = f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
+                fd = os.open(node, os.O_WRONLY)
+                try:
+                    fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+                    n += 1
+                    logger.info(f"{self}: USB reset {node}")
+                finally:
+                    os.close(fd)
+            except Exception as e:
+                logger.warning(f"{self}: USB reset failed for {os.path.basename(d)}: {e}")
+        if n == 0:
+            logger.warning(f"{self}: no Orbbec USB device found to reset (vid 2bc5).")
+        # 让下一次 _find_device 用全新 context 重新枚举(旧 handle 已随 reset 失效)
+        _shared_context = None
 
     # ------------------------------------------------------------------ decoding
     def _decode_color(self, color_frame) -> NDArray[Any]:

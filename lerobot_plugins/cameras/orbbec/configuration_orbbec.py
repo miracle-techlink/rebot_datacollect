@@ -75,6 +75,13 @@ class OrbbecCameraConfig(CameraConfig):
     color_format: str = "auto"
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    # Self-heal a wedged device on connect: if warmup can't get frames within the ceiling,
+    # USB-reset the camera and retry. This recovers the common failure where a prior process
+    # died abnormally (core dump / kill -9) without stopping the stream, leaving a leaked
+    # session so the next connect() stalls. Needs udev access to /dev/bus/usb (no sudo; see
+    # install_orbbec.sh). Set reset_on_stall=False to disable.
+    reset_on_stall: bool = True
+    reset_retries: int = 1
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)

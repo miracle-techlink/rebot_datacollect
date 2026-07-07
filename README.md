@@ -94,7 +94,7 @@ PY=/path/to/env/python CAN=<canX> FRONT_CAM=/dev/videoN \
 
 ## 常见问题
 
-- **Orbbec 抓帧超时 / 卡死**:多为反复启停后管线卡死。`python scripts/usbreset_orbbec.py` 复位后重试;根治是插 **USB3 口**。
+- **Orbbec 抓帧超时 / 卡死**:根因是**上次进程异常退出**(core dump / `kill -9`)没走到 `pipeline.stop()`,相机会话泄漏,下次开流拿不到帧。现在 `connect()` **会自愈**:warmup 拿不到帧时自动 USB 复位该相机并重试一次(`reset_on_stall=True`,默认开)。若仍失败可手动 `python scripts/usbreset_orbbec.py`。**根治办法是别用 `kill -9` 停**(用 `Ctrl-C`/`q` 优雅退出,相机会干净关闭)。
 - **`can*` / `/dev/video*` 号变了**:USB 重新枚举会漂。`setup_rebot_can.sh` 自动找 PCAN 接口;相机用 `motorbridge-cli` / `v4l2-ctl --list-devices` 重认。
 - **`Unsupported video codec: libsvtav1`**:某些 pyav 构建没有 svtav1。脚本已默认 `--dataset.rgb_encoder.vcodec=h264`(深度用 hevc)。
 - **`Conversion ... format 'gray12le' is not yet supported`**(带深度录制崩在 `save_episode`):这台 pyav 不支持 gray12le 的 numpy 转换。跑 `bash lerobot_plugins/install_depthfix.sh` 打补丁(编码用构造器、解码手动读 plane,保持 gray12le/hevc/mp4 无损)。lerobot 升级会覆盖 → 重跑该脚本。
