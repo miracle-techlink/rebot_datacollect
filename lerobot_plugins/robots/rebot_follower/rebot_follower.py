@@ -41,6 +41,7 @@ class RebotFollower(SeeedB601RSFollower):
         self.config = config
         # 每个深度相机的最近一帧深度,取帧偶发超时时回退,保证 dataset 帧不缺键。
         self._last_depth: dict[str, np.ndarray] = {}
+        self._last_color: dict[str, np.ndarray] = {}  # nonblocking 回退用
         self._grip_set: float | None = None  # 夹爪设定点(度),直驱 motor 7
 
     def _has_depth(self, cam_name: str) -> bool:
@@ -58,7 +59,10 @@ class RebotFollower(SeeedB601RSFollower):
         return ft
 
     def get_observation(self) -> dict:
-        # 父类已取电机状态 + 各相机彩色(async_read)。
+        if getattr(self.config, "cameras_nonblocking", False):
+            return self._get_observation_nonblocking()
+
+        # 默认路径:父类取电机状态 + 各相机彩色(阻塞 async_read),这里补对齐深度。
         obs = super().get_observation()
         for cam_name, cam in self.cameras.items():
             if not self._has_depth(cam_name):
@@ -73,6 +77,51 @@ class RebotFollower(SeeedB601RSFollower):
                     depth = np.zeros((cfg.height, cfg.width, 1), dtype=np.uint16)
             self._last_depth[cam_name] = depth
             obs[f"{cam_name}_depth"] = depth
+        return obs
+
+    def _get_observation_nonblocking(self) -> dict:
+        """非阻塞观测:电机 CAN 反馈(同官方)+ 相机 read_latest(不阻塞等帧)。见 config
+        ``cameras_nonblocking``。相机帧超过 ``stale_frame_ms`` 会告警并回退上一帧(暴露卡死)。"""
+        obs: dict = {}
+        # 电机反馈:批量请求 + 一次 poll + 读缓存状态(与官方 get_observation 完全一致)
+        for motor in self.motors.values():
+            motor.request_feedback()
+        try:
+            self.bus.poll_feedback_once()
+        except Exception:
+            logger.warning("can bus poll feedback failed.")
+        for motor_name, motor in self.motors.items():
+            state = motor.get_state()
+            if state is not None:
+                obs[f"{motor_name}.pos"] = math.degrees(state.pos)
+                obs[f"{motor_name}.vel"] = math.degrees(state.vel)
+                obs[f"{motor_name}.torque"] = state.torq
+            else:
+                obs[f"{motor_name}.pos"] = 0.0
+                obs[f"{motor_name}.vel"] = 0.0
+                obs[f"{motor_name}.torque"] = 0.0
+
+        # 相机:非阻塞取最新缓存帧(彩色 + 可选对齐深度)
+        max_age = int(getattr(self.config, "stale_frame_ms", 200))
+        for cam_name, cam in self.cameras.items():
+            cfg = self.config.cameras[cam_name]
+            try:
+                obs[cam_name] = cam.read_latest(max_age_ms=max_age)
+                self._last_color[cam_name] = obs[cam_name]
+            except Exception as e:
+                logger.warning(f"{cam_name} color read_latest stale/failed ({e}); 回退上一帧。")
+                fallback = self._last_color.get(cam_name)
+                obs[cam_name] = fallback if fallback is not None else np.zeros((cfg.height, cfg.width, 3), dtype=np.uint8)
+            if self._has_depth(cam_name):
+                try:
+                    depth = cam.read_latest_depth(max_age_ms=max_age)
+                except Exception as e:
+                    logger.warning(f"{cam_name} depth read_latest stale/failed ({e}); 回退上一帧。")
+                    depth = self._last_depth.get(cam_name)
+                    if depth is None:
+                        depth = np.zeros((cfg.height, cfg.width, 1), dtype=np.uint16)
+                self._last_depth[cam_name] = depth
+                obs[f"{cam_name}_depth"] = depth
         return obs
 
     # ---------------- send_action:臂走官方(不含夹爪),夹爪直驱 motor 7 ----------------

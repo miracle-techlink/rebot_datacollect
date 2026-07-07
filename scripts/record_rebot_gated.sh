@@ -36,6 +36,8 @@ OPT_ARG=()
 if [ "${STREAM_ENCODE:-0}" = "1" ]; then
   OPT_ARG+=(--dataset.streaming_encoding=true --dataset.encoder_threads="${ENC_THREADS:-2}")
 fi
+# NONBLOCK=1 → 相机非阻塞 read_latest(消除 async_read 把循环卡在相机帧率的断崖)。先验证再用于正式录制
+[ "${NONBLOCK:-0}" = "1" ] && OPT_ARG+=(--robot.cameras_nonblocking=true)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "$PY" "$SCRIPT_DIR/record_rebot_gated.py" \

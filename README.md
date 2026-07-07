@@ -112,10 +112,23 @@ PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN bash scripts/profile_loop.sh
 | **2 软件** | 批量录制关 rerun / 流式编码搬离主循环 | `NO_DISPLAY=1`、`STREAM_ENCODE=1 [ENC_THREADS=2]` | 无(官方参数) |
 | **3 相机** | USB3 上彩色去 mjpg 免解码;深度用硬件 D2C 卸 CPU | `CAM_FORMAT=rgb`、`ALIGN_MODE=hw` | 低(需设备支持;失败自动回退 sw) |
 
+**实测发现 + A/B(Jetson Thor,单臂+腕深+front)**:主循环 33.5ms=29.9Hz,头号耗时是
+`get_observation` 20ms —— 根因是官方用 `cam.async_read()` **阻塞等下一帧**(30fps→33ms),把控制循环
+死锁在相机帧率上,任何一次迭代超时都要多等整整一个相机周期 → 掉到 27-28Hz。开关 `cameras_nonblocking`
+(env `NONBLOCK=1`)改用 `read_latest` 非阻塞取最新帧:实测 `get_observation` **20.46→0.06 ms**,循环
+**33.5→13.0 ms**,可达帧率 **29.9→76.9 Hz**,30Hz 录制留 ~20ms 余量给 dataset/rerun,断崖消除。
+**默认关**(=官方已验证行为,零改动);开之前可用打点脚本 A/B 对比:
+```bash
+bash scripts/profile_loop.sh              # 默认(阻塞)基线
+NONBLOCK=1 bash scripts/profile_loop.sh   # 非阻塞,对比 get_observation 与可达 Hz
+```
+> `read_latest` 取舍:相机 fps < 循环 fps 时会读到重复帧(30/30 基本 1:1);帧超 `stale_frame_ms`(默认
+> 200ms)会告警+回退上一帧,不会静默录冻结帧。相机保持 30fps 时无实际影响。
+
 示例(USB3 全优化 + 关显示批量录):
 ```bash
 PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN \
-  REPO_ID=... TASK="..." NO_DISPLAY=1 STREAM_ENCODE=1 CAM_FORMAT=rgb ALIGN_MODE=hw \
+  REPO_ID=... TASK="..." NO_DISPLAY=1 STREAM_ENCODE=1 CAM_FORMAT=rgb ALIGN_MODE=hw NONBLOCK=1 \
   bash scripts/record_rebot_gated.sh
 ```
 

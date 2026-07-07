@@ -60,6 +60,17 @@ class RebotFollowerConfig(SeeedB601RSFollowerConfig):
     # home 已是坐姿、起步无跳变,故默认关掉。想要起步限速再设个较大值(如 20~30)。
     max_relative_target: float | dict[str, float] | None = None
 
+    # ---------- 观测相机读取(性能,opt-in) ----------
+    # False(默认)= 官方阻塞 async_read 行为(已验证)。默认关 = 零改动、可随时回退。
+    # True = get_observation 用 read_latest 非阻塞取最新缓存帧。官方 async_read 会**阻塞等下一帧**
+    #   (30fps→33ms),把控制循环死锁在相机帧率上(实测 get_observation 20ms、循环 29.9Hz,一加
+    #   dataset/rerun 就掉到 27-28Hz)。read_latest 瞬时返回,循环由 record 的 precise_sleep 按 fps
+    #   节流,帧新鲜度不变但消除"超时一次就多等整帧"的断崖 → 循环 33→~15ms,余量足。
+    #   取舍:相机 fps < 循环 fps 时会读到重复帧(30/30 基本 1:1);帧超过 stale_frame_ms 会
+    #   回退上一帧并告警(不会静默录冻结帧)。开之前建议先试 NO_DISPLAY=1 STREAM_ENCODE=1。
+    cameras_nonblocking: bool = False
+    stale_frame_ms: int = 200  # nonblocking 时,最新帧超过此龄触发告警+回退(暴露相机卡死)
+
     # ---------- 夹爪(直驱 7 号电机,绕开官方力矩前馈路径) ----------
     # 官方 RS 夹爪走 send_mit(0,0,kp=0,kd=1.5,tau_ff),纯力矩前馈(力矩上限 10)推不动,
     # 且每周期在 send_action 里塞一句阻塞 poll_feedback_once 拖乱机械臂节奏。这里改为把夹爪

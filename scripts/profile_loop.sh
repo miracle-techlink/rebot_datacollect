@@ -20,10 +20,13 @@ if [ "${NO_CAM:-0}" != "1" ]; then
   CAM_ARG=(--robot.cameras="${CAMS}")
 fi
 
+# NONBLOCK=1 → 相机 read_latest 非阻塞(A/B 对比:先默认跑一次,再 NONBLOCK=1 跑一次)
+NB_ARG=(); [ "${NONBLOCK:-0}" = "1" ] && NB_ARG=(--robot.cameras_nonblocking=true)
+
 exec "$PY" "$SCRIPT_DIR/profile_loop.py" \
   --robot.type=rebot_follower --robot.id=follower1 \
   --robot.port="${CAN}" --robot.can_adapter=socketcan \
-  "${CAM_ARG[@]}" \
+  "${CAM_ARG[@]}" "${NB_ARG[@]}" \
   --teleop.type=starai_to_rebot_leader --teleop.port="${LEADER_PORT}" \
   --teleop.id=rebot_leader --teleop.leader_id=leader1 \
   --dataset.repo_id=profile/tmp --dataset.single_task=profile \
