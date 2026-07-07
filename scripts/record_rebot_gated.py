@@ -35,6 +35,8 @@ from lerobot.utils.visualization_utils import init_visualization, shutdown_visua
 # 复用官方 record 的配置 dataclass 与录制循环(import 该模块也顺带触发插件注册)
 from lerobot.scripts.lerobot_record import RecordConfig, record_loop
 
+logger = logging.getLogger(__name__)
+
 
 def _ask(prompt: str) -> str:
     try:
@@ -113,20 +115,32 @@ def main(cfg: RecordConfig) -> None:
 
                 events["exit_early"] = False
                 log_say(f"Recording episode {kept}", cfg.play_sounds)
-                record_loop(
-                    robot=robot,
-                    events=events,
-                    fps=cfg.dataset.fps,
-                    teleop_action_processor=t_proc,
-                    robot_action_processor=r_proc,
-                    robot_observation_processor=o_proc,
-                    teleop=teleop,
-                    dataset=dataset,
-                    control_time_s=ep_time,
-                    single_task=cfg.dataset.single_task,
-                    display_data=cfg.display_data,
-                    display_mode=cfg.display_mode,
-                )
+                # 单条错误隔离:硬件抖动(CAN 掉线 socketcan write failed / 相机卡)不该杀掉整轮 ——
+                # 捕获、丢弃本条、让用户重试或退出,而不是让异常炸掉 50 条会话。
+                try:
+                    record_loop(
+                        robot=robot,
+                        events=events,
+                        fps=cfg.dataset.fps,
+                        teleop_action_processor=t_proc,
+                        robot_action_processor=r_proc,
+                        robot_observation_processor=o_proc,
+                        teleop=teleop,
+                        dataset=dataset,
+                        control_time_s=ep_time,
+                        single_task=cfg.dataset.single_task,
+                        display_data=cfg.display_data,
+                        display_mode=cfg.display_mode,
+                    )
+                except Exception as e:
+                    logger.error(f"episode {kept} 录制中出错(可能 CAN 掉线/相机抖动): {e}")
+                    try:
+                        dataset.clear_episode_buffer()
+                    except Exception:
+                        pass
+                    if _ask("本条已丢弃。回车重试本条 / q 退出并保存已录: ") == "q":
+                        break
+                    continue
 
                 # 录制中按 →/Esc/← 触发的 lerobot 键盘标志,这里都只当作"提前结束本条";
                 # 是否继续 / 退出整轮,完全交给下面的提示(避免 Esc 直接杀掉整个采集)。
@@ -143,23 +157,39 @@ def main(cfg: RecordConfig) -> None:
                 if dec == "q":
                     dataset.clear_episode_buffer()
                     break
-                dataset.save_episode()
+                try:
+                    dataset.save_episode()
+                except Exception as e:
+                    logger.error(f"episode {kept} 保存失败: {e}")
+                    try:
+                        dataset.clear_episode_buffer()
+                    except Exception:
+                        pass
+                    if _ask("保存失败,本条丢弃。回车继续 / q 退出: ") == "q":
+                        break
+                    continue
                 kept += 1
                 log_say("Saved", cfg.play_sounds)
     finally:
+        # 收尾容错:任一步失败(如 CAN 掉线时 robot.disconnect 回零报错)都不该跳过后续清理
+        # (相机/键盘/rerun 仍要关掉),逐步 try/except。
         log_say("Stop recording", cfg.play_sounds, blocking=True)
-        if dataset:
-            dataset.finalize()
-        if robot.is_connected:
-            robot.disconnect()
-        if teleop.is_connected:
-            teleop.disconnect()
-        if listener is not None:
-            listener.stop()
-        if cfg.display_data:
-            shutdown_visualization(cfg.display_mode)
+        for name, fn in [
+            ("finalize", lambda: dataset.finalize() if dataset else None),
+            ("robot.disconnect", lambda: robot.disconnect() if robot.is_connected else None),
+            ("teleop.disconnect", lambda: teleop.disconnect() if teleop.is_connected else None),
+            ("listener.stop", lambda: listener.stop() if listener is not None else None),
+            ("viewer", lambda: shutdown_visualization(cfg.display_mode) if cfg.display_data else None),
+        ]:
+            try:
+                fn()
+            except Exception as e:
+                logger.error(f"收尾 {name} 失败(继续清理其余): {e}")
         if cfg.dataset.push_to_hub and dataset and dataset.num_episodes > 0:
-            dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+            try:
+                dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+            except Exception as e:
+                logger.error(f"push_to_hub 失败: {e}")
 
     print(f"\n完成:共保留 {kept} 条,数据集在 {dataset.root}")
 
