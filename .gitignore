@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+Log/
+*.log
+.DS_Store
+# 数据集不进仓库(存在 ~/.cache/huggingface/lerobot/,或推到 Hub/ModelScope)
+data/
+datasets/
