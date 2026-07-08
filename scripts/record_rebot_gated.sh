@@ -6,11 +6,14 @@
 #           bash scripts/record_rebot_gated.sh [额外 --key=val ...]
 #   环境变量: PY / LEADER_PORT / CAN / WRIST_CAM / FRONT_CAM / REPO_ID / TASK / EPISODES /
 #             EP_TIME(每条秒数,默认15) / PUSH / NO_DEPTH / WARMUP / FPS
-#   性能优化开关(见 README「优化」):
+#   性能 / 韧性开关(见 README「优化」):
+#     NONBLOCK=1|0              非阻塞相机 read_latest,29.9→76.9Hz。**默认 1(开)**;=0 回退官方阻塞
+#     STREAM_ENCODE=1|0        流式视频编码(编码与录制重叠,多核并行;+ ENC_THREADS,默认2)。**默认 1(开)**
+#     RESUME=1                 续录:配合 REPO_ID=完整已存在数据集名(含时间戳),接着往同一数据集录、不新建
+#                              (会话中途死了不丢已录的;EPISODES 视为「总目标条数」)
 #     CAM_FORMAT=mjpg|rgb|yuyv  腕部彩色在线格式(USB3 用 rgb 免 CPU 解码;USB2 必须 mjpg)。默认 mjpg
 #     ALIGN_MODE=sw|hw          深度 D2C 对齐:hw=硬件(卸 CPU,需设备支持)。默认 sw
 #     NO_DISPLAY=1              关 rerun(批量录制省主循环开销)
-#     STREAM_ENCODE=1          流式视频编码(搬离主循环,多核并行;+ ENC_THREADS,默认2)
 set -e
 PY="${PY:-python}"
 LEADER_PORT="${LEADER_PORT:-/dev/ttyCH341USB0}"
@@ -30,14 +33,17 @@ export PATH="$BIN_DIR:$PATH"
 USE_DEPTH="true"; [ "${NO_DEPTH:-0}" = "1" ] && USE_DEPTH="false"
 CAMS="{ wrist: {type: orbbec, serial_number_or_name: ${WRIST_CAM}, fps: ${FPS}, width: 640, height: 480, color_format: ${CAM_FORMAT:-mjpg}, use_depth: ${USE_DEPTH}, align_mode: ${ALIGN_MODE:-sw}, warmup_s: ${WARMUP:-15}}, front: {type: opencv, index_or_path: ${FRONT_CAM}, fps: ${FPS}, width: 640, height: 480, backend: V4L2, fourcc: MJPG} }"
 
-# 性能开关 → CLI
+# 性能 / 韧性开关 → CLI
 OPT_ARG=()
 [ "${NO_DISPLAY:-0}" = "1" ] && DISPLAY_FLAG="false" || DISPLAY_FLAG="true"
-if [ "${STREAM_ENCODE:-0}" = "1" ]; then
+# 流式视频编码:默认开(把每条 ~16s 编码和录制重叠,多核并行)。STREAM_ENCODE=0 关
+if [ "${STREAM_ENCODE:-1}" = "1" ]; then
   OPT_ARG+=(--dataset.streaming_encoding=true --dataset.encoder_threads="${ENC_THREADS:-2}")
 fi
-# NONBLOCK=1 → 相机非阻塞 read_latest(消除 async_read 把循环卡在相机帧率的断崖)。先验证再用于正式录制
-[ "${NONBLOCK:-0}" = "1" ] && OPT_ARG+=(--robot.cameras_nonblocking=true)
+# 非阻塞相机:默认开(29.9→76.9Hz,已验证)。NONBLOCK=0 回退官方阻塞 async_read
+[ "${NONBLOCK:-1}" = "0" ] && OPT_ARG+=(--robot.cameras_nonblocking=false)
+# 续录:RESUME=1 + REPO_ID=完整已存在数据集名(含时间戳)→ 接着往同一数据集录,不新建
+[ "${RESUME:-0}" = "1" ] && OPT_ARG+=(--resume=true)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "$PY" "$SCRIPT_DIR/record_rebot_gated.py" \

@@ -72,6 +72,16 @@ PY=/path/to/env/python CAN=<canX> FRONT_CAM=/dev/videoN \
 
 数据集存 `~/.cache/huggingface/lerobot/<REPO_ID>_<时间戳>/`(LeRobot 每次采集自动加时间戳保证唯一)。
 
+**默认已开的韧性/性能**:`NONBLOCK=1`(非阻塞相机,76.9Hz)、`STREAM_ENCODE=1`(编码与录制重叠)、
+单条错误隔离(CAN 掉线/相机抖只丢这一条,不炸整轮)、收尾容错。要关:`NONBLOCK=0` / `STREAM_ENCODE=0`。
+
+**断点续录(会话中途死了不丢已录的)**:
+```bash
+# 用刚才那个数据集的完整名(含时间戳)+ RESUME=1;EPISODES 视为总目标条数
+REPO_ID="Liuyue9698/rebot_pick_place_20260708_074051" RESUME=1 EPISODES=50 \
+  PY=... CAN=can0 FRONT_CAM=/dev/video10 TASK="..." bash scripts/record_rebot_gated.sh
+```
+
 ## 脚本一览
 
 | 脚本 | 作用 |
@@ -121,7 +131,7 @@ PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN bash scripts/profile_loop.sh
 死锁在相机帧率上,任何一次迭代超时都要多等整整一个相机周期 → 掉到 27-28Hz。开关 `cameras_nonblocking`
 (env `NONBLOCK=1`)改用 `read_latest` 非阻塞取最新帧:实测 `get_observation` **20.46→0.06 ms**,循环
 **33.5→13.0 ms**,可达帧率 **29.9→76.9 Hz**,30Hz 录制留 ~20ms 余量给 dataset/rerun,断崖消除。
-**默认关**(=官方已验证行为,零改动);开之前可用打点脚本 A/B 对比:
+**现已默认开**(`cameras_nonblocking=True`,硬件验证过);`NONBLOCK=0` 可回退官方阻塞行为。A/B 对比:
 ```bash
 bash scripts/profile_loop.sh              # 默认(阻塞)基线
 NONBLOCK=1 bash scripts/profile_loop.sh   # 非阻塞,对比 get_observation 与可达 Hz

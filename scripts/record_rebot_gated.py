@@ -38,6 +38,20 @@ from lerobot.scripts.lerobot_record import RecordConfig, record_loop
 logger = logging.getLogger(__name__)
 
 
+def _clean_tmp_dirs(root) -> None:
+    """删掉数据集目录里编码/保存失败留下的 tmp* 临时目录(orphan 视频块)。"""
+    import glob
+    import os
+    import shutil
+
+    try:
+        for p in glob.glob(os.path.join(str(root), "tmp*")):
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def _ask(prompt: str) -> str:
     try:
         return input(prompt).strip().lower()
@@ -77,23 +91,40 @@ def main(cfg: RecordConfig) -> None:
     )
 
     num_cams = len(robot.cameras) if hasattr(robot, "cameras") else 0
-    cfg.dataset.stamp_repo_id()
-    dataset = LeRobotDataset.create(
-        cfg.dataset.repo_id,
-        cfg.dataset.fps,
-        root=cfg.dataset.root,
-        robot_type=robot.name,
-        features=dataset_features,
-        use_videos=cfg.dataset.video,
-        image_writer_processes=cfg.dataset.num_image_writer_processes,
-        image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cams,
-        batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-        rgb_encoder=cfg.dataset.rgb_encoder,
-        depth_encoder=cfg.dataset.depth_encoder,
-        encoder_threads=cfg.dataset.encoder_threads,
-        streaming_encoding=cfg.dataset.streaming_encoding,
-        encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
-    )
+    if cfg.resume:
+        # 续录进已有数据集(会话中途死了不丢已录的)。--resume=true 时 REPO_ID 需给**完整已存在**的
+        # 数据集名(含时间戳),或用 --dataset.root 指到该目录。EPISODES 是「总目标条数」。
+        dataset = LeRobotDataset.resume(
+            cfg.dataset.repo_id,
+            root=cfg.dataset.root,
+            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            rgb_encoder=cfg.dataset.rgb_encoder,
+            depth_encoder=cfg.dataset.depth_encoder,
+            encoder_threads=cfg.dataset.encoder_threads,
+            streaming_encoding=cfg.dataset.streaming_encoding,
+            encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+            image_writer_processes=cfg.dataset.num_image_writer_processes if num_cams else 0,
+            image_writer_threads=(cfg.dataset.num_image_writer_threads_per_camera * num_cams) if num_cams else 0,
+        )
+        logger.info(f"RESUME: 续录 {dataset.repo_id},已有 {dataset.num_episodes} 条")
+    else:
+        cfg.dataset.stamp_repo_id()
+        dataset = LeRobotDataset.create(
+            cfg.dataset.repo_id,
+            cfg.dataset.fps,
+            root=cfg.dataset.root,
+            robot_type=robot.name,
+            features=dataset_features,
+            use_videos=cfg.dataset.video,
+            image_writer_processes=cfg.dataset.num_image_writer_processes,
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cams,
+            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+            rgb_encoder=cfg.dataset.rgb_encoder,
+            depth_encoder=cfg.dataset.depth_encoder,
+            encoder_threads=cfg.dataset.encoder_threads,
+            streaming_encoding=cfg.dataset.streaming_encoding,
+            encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+        )
 
     robot.connect()
     teleop.connect()
@@ -101,7 +132,7 @@ def main(cfg: RecordConfig) -> None:
 
     target = cfg.dataset.num_episodes
     ep_time = cfg.dataset.episode_time_s
-    kept = 0
+    kept = dataset.num_episodes  # resume 时从已录条数接着数(target 为总目标)
     try:
         with VideoEncodingManager(dataset):
             while kept < target:
@@ -165,6 +196,7 @@ def main(cfg: RecordConfig) -> None:
                         dataset.clear_episode_buffer()
                     except Exception:
                         pass
+                    _clean_tmp_dirs(dataset.root)  # 清掉失败留下的 tmp* 视频块
                     if _ask("保存失败,本条丢弃。回车继续 / q 退出: ") == "q":
                         break
                     continue
