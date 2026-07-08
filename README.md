@@ -150,6 +150,22 @@ PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN \
 
 > 注:`ALIGN_MODE=hw`(硬件 D2C)与 `CAM_FORMAT=rgb` 属**可选加速项**,需设备/固件支持,建议先 `teleop_rebot.sh` 带这俩开关空跑验证深度对齐正常、再用于录制。硬件 D2C 不支持时插件会告警并自动回退软件对齐。
 
+## 保存/编码提速(每条 save 从 ~12s → ~2.5s)
+
+`save_episode` 慢的**唯一卡点是无损深度视频编码**(实测占单条编码 71%:深度 hevc lossless 8.3s/300帧
+vs 彩色 h264 1.65s)。默认路径本就**三路并行编码**(每路一进程),所以单条 wall-clock ≈ 深度那一路。
+
+- **深度无法硬件加速**:Thor 的 NVENC 做不了无损 12-bit(实测丢低位)、pyav 也够不到 nvenc、
+  v4l2m2m 在 Thor 无设备。深度只能留软件 libx265 lossless(gray12le,位精确)。
+- **解法 = 深度 `preset=ultrafast`**(无损下 preset 只改速度/体积,不改质量):实测 **8.3s→1.65s(5×)**、
+  逐像素**仍无损**(误差=纯 12-bit 量化 1mm)、真实带噪深度**体积仅 +1.8%**。已设为默认(`DEPTH_PRESET=ultrafast`)。
+- 配合三路并行 → **单条 save ~12s → ~2.5s**,走安全的非流式路径,不碰 streaming 死锁。想更小体积:
+  `DEPTH_PRESET=superfast`(2.5×)或 `=medium`(原速)。
+
+> 为什么不用 streaming 后台队列?它能让 save 近乎 0 延迟,但对无损深度会攒 backlog,中途 SIGINT 时
+> lerobot 的 image_writer 无超时 `queue.join()` 会死锁 → parquet 损坏丢整批(我们踩过,丢了 27 条)。
+> `ultrafast` 已把 save 降到 ~2.5s,不值得为了那点延迟去冒死锁风险。
+
 ## 许可
 
 插件基于 Apache-2.0(沿用 LeRobot / HuggingFace 头)。

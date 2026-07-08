@@ -35,6 +35,7 @@ exec lerobot-record \
   --teleop.id=rebot_leader --teleop.leader_id=leader1 \
   --dataset.fps=30 --display_data=true \
   --dataset.rgb_encoder.vcodec=h264 \
+  --dataset.depth_encoder.preset="${DEPTH_PRESET:-ultrafast}" \
   --dataset.repo_id="${REPO_ID}" \
   --dataset.single_task="${TASK}" \
   --dataset.num_episodes="${EPISODES}" \

@@ -6,6 +6,8 @@
 #           bash scripts/record_rebot_gated.sh [额外 --key=val ...]
 #   环境变量: PY / LEADER_PORT / CAN / WRIST_CAM / FRONT_CAM / REPO_ID / TASK / EPISODES /
 #             EP_TIME(每条秒数,默认15) / PUSH / NO_DEPTH / WARMUP / FPS
+#             DEPTH_PRESET(深度无损 x265 preset,默认 ultrafast → 深度编码 5× 提速、仍位精确无损、
+#                          真实带噪深度体积仅 +1.8%;想更小体积设 superfast/medium)
 #   性能 / 韧性开关(见 README「优化」):
 #     NONBLOCK=1|0              非阻塞相机 read_latest,29.9→76.9Hz。**默认 1(开)**;=0 回退官方阻塞
 #     STREAM_ENCODE=1|0        流式视频编码(编码后台化)。**默认 0(关,数据安全)**;=1 有中途打断
@@ -58,6 +60,7 @@ exec "$PY" "$SCRIPT_DIR/record_rebot_gated.py" \
   --teleop.id=rebot_leader --teleop.leader_id=leader1 \
   --dataset.fps="${FPS}" --display_data="${DISPLAY_FLAG}" \
   --dataset.rgb_encoder.vcodec=h264 \
+  --dataset.depth_encoder.preset="${DEPTH_PRESET:-ultrafast}" \
   --dataset.repo_id="${REPO_ID}" \
   --dataset.single_task="${TASK}" \
   --dataset.num_episodes="${EPISODES}" \
