@@ -107,6 +107,7 @@ REPO_ID="Liuyue9698/rebot_pick_place_20260708_074051" RESUME=1 EPISODES=50 \
 
 - **Orbbec 抓帧超时 / 卡死**:根因是**上次进程异常退出**(core dump / `kill -9`)没走到 `pipeline.stop()`,相机会话泄漏,下次开流拿不到帧。现在 `connect()` **会自愈**:warmup 拿不到帧时自动 USB 复位该相机并重试一次(`reset_on_stall=True`,默认开)。若仍失败可手动 `python scripts/usbreset_orbbec.py`。**根治办法是别用 `kill -9` 停**(用 `Ctrl-C`/`q` 优雅退出,相机会干净关闭)。
 - **`can*` / `/dev/video*` 号变了**:USB 重新枚举会漂。`setup_rebot_can.sh` 自动找 PCAN 接口;相机用 `motorbridge-cli` / `v4l2-ctl --list-devices` 重认。
+- **CAN 反复掉线**(`-71 Rx urb aborted` / `can0 removed` / `Network is down` / `No such device`):PCAN 在共享 USB2 hub 上被 **USB autosuspend** 连累掉线(实测每 ~77s 掉一次)。跑 **`sudo bash scripts/install_can_udev.sh`** 装持久 udev 规则(关 autosuspend + 掉线后自动拉起 can 口),掉线频率降 3×、且 re-attach 自愈。**根治**:把 PCAN 插独立/直连主板 USB 口,别用共享 hub。残留偶发掉线由采集脚本的单条错误隔离兜底(只丢一条)。
 - **`Unsupported video codec: libsvtav1`**:某些 pyav 构建没有 svtav1。脚本已默认 `--dataset.rgb_encoder.vcodec=h264`(深度用 hevc)。
 - **带深度录制崩在 `save_episode`**(`gray12le not supported` / `canonical_name` / `add_stream_from_template`):都是这台 pyav 版本偏旧、缺若干 API。跑 `bash lerobot_plugins/install_depthfix.sh` 一次性打 5 处兼容补丁(编码构造器 / 解码读 plane / codec.name 回退 / add_stream(template=) 拼接),保持 gray12le/hevc/mp4 无损。lerobot 升级会覆盖 → 重跑该脚本。
 - **record loop < 30Hz**:先 `maxn_lock.sh`;把 Orbbec 挪 USB3、CAN/主臂串口与相机分开 USB 控制器;批量录制可 `--display_data=false`。
