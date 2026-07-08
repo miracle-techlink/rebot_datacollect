@@ -72,8 +72,9 @@ PY=/path/to/env/python CAN=<canX> FRONT_CAM=/dev/videoN \
 
 数据集存 `~/.cache/huggingface/lerobot/<REPO_ID>_<时间戳>/`(LeRobot 每次采集自动加时间戳保证唯一)。
 
-**默认已开的韧性/性能**:`NONBLOCK=1`(非阻塞相机,76.9Hz)、`STREAM_ENCODE=1`(编码与录制重叠)、
-单条错误隔离(CAN 掉线/相机抖只丢这一条,不炸整轮)、收尾容错。要关:`NONBLOCK=0` / `STREAM_ENCODE=0`。
+**默认开**:`NONBLOCK=1`(非阻塞相机,76.9Hz)、单条错误隔离(CAN 掉线/相机抖只丢这一条)、收尾容错。
+**`STREAM_ENCODE` 默认关**:每条 save 阻塞把视频编完(~10-16s)才返回——慢但安全;开(=1)对无损深度会把
+backlog 攒到退出集中 flush,中途 SIGINT 可能死锁 → parquet 损坏丢整批(踩过一次丢 27 条),别轻易开。
 
 **断点续录(会话中途死了不丢已录的)**:
 ```bash
@@ -123,7 +124,8 @@ PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN bash scripts/profile_loop.sh
 |---|---|---|---|
 | **0 系统** | Jetson MAXN + 锁频,消 DVFS 抖动 | `sudo bash scripts/maxn_lock.sh` | 无。**最先做,常常一步到位** |
 | **1 USB 拓扑** | 相机与 CAN/主臂串口**分开 USB 控制器**(相机挪独立 USB3 口),别共用一个 USB2 hub | `python scripts/check_usb.py` 体检 + 物理换口 | 无 |
-| **2 软件** | 批量录制关 rerun / 流式编码搬离主循环 | `NO_DISPLAY=1`、`STREAM_ENCODE=1 [ENC_THREADS=2]` | 无(官方参数) |
+| **2 软件** | 批量录制关 rerun(省主循环) | `NO_DISPLAY=1` | 无 |
+| **2b** | 流式编码(不建议开:见下) | `STREAM_ENCODE=1` | **高:中途 SIGINT 死锁丢整批** |
 | **3 相机** | USB3 上彩色去 mjpg 免解码;深度用硬件 D2C 卸 CPU | `CAM_FORMAT=rgb`、`ALIGN_MODE=hw` | 低(需设备支持;失败自动回退 sw) |
 
 **实测发现 + A/B(Jetson Thor,单臂+腕深+front)**:主循环 33.5ms=29.9Hz,头号耗时是
@@ -139,10 +141,10 @@ NONBLOCK=1 bash scripts/profile_loop.sh   # 非阻塞,对比 get_observation 与
 > `read_latest` 取舍:相机 fps < 循环 fps 时会读到重复帧(30/30 基本 1:1);帧超 `stale_frame_ms`(默认
 > 200ms)会告警+回退上一帧,不会静默录冻结帧。相机保持 30fps 时无实际影响。
 
-示例(USB3 全优化 + 关显示批量录):
+示例(USB3 全优化 + 关显示批量录;**不开 STREAM_ENCODE**):
 ```bash
 PY=/path/env/python CAN=canX FRONT_CAM=/dev/videoN \
-  REPO_ID=... TASK="..." NO_DISPLAY=1 STREAM_ENCODE=1 CAM_FORMAT=rgb ALIGN_MODE=hw NONBLOCK=1 \
+  REPO_ID=... TASK="..." NO_DISPLAY=1 CAM_FORMAT=rgb ALIGN_MODE=hw \
   bash scripts/record_rebot_gated.sh
 ```
 

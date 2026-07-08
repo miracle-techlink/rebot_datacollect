@@ -8,7 +8,8 @@
 #             EP_TIME(每条秒数,默认15) / PUSH / NO_DEPTH / WARMUP / FPS
 #   性能 / 韧性开关(见 README「优化」):
 #     NONBLOCK=1|0              非阻塞相机 read_latest,29.9→76.9Hz。**默认 1(开)**;=0 回退官方阻塞
-#     STREAM_ENCODE=1|0        流式视频编码(编码与录制重叠,多核并行;+ ENC_THREADS,默认2)。**默认 1(开)**
+#     STREAM_ENCODE=1|0        流式视频编码(编码后台化)。**默认 0(关,数据安全)**;=1 有中途打断
+#                              死锁丢数据的风险(见脚本内注释),仅在确定不中途 SIGINT 时才开
 #     RESUME=1                 续录:配合 REPO_ID=完整已存在数据集名(含时间戳),接着往同一数据集录、不新建
 #                              (会话中途死了不丢已录的;EPISODES 视为「总目标条数」)
 #     CAM_FORMAT=mjpg|rgb|yuyv  腕部彩色在线格式(USB3 用 rgb 免 CPU 解码;USB2 必须 mjpg)。默认 mjpg
@@ -36,9 +37,12 @@ CAMS="{ wrist: {type: orbbec, serial_number_or_name: ${WRIST_CAM}, fps: ${FPS}, 
 # 性能 / 韧性开关 → CLI
 OPT_ARG=()
 [ "${NO_DISPLAY:-0}" = "1" ] && DISPLAY_FLAG="false" || DISPLAY_FLAG="true"
-# 流式视频编码:默认开(把每条 ~16s 编码和录制重叠,多核并行)。STREAM_ENCODE=0 关
-if [ "${STREAM_ENCODE:-1}" = "1" ]; then
-  OPT_ARG+=(--dataset.streaming_encoding=true --dataset.encoder_threads="${ENC_THREADS:-2}")
+# 流式视频编码:**默认关(数据安全)**。开(STREAM_ENCODE=1)会把编码后台化,但对无损深度这种重
+# 编码,backlog 会攒到退出时集中 flush;若中途 Ctrl-C/SIGINT,VideoEncodingManager.__exit__ 的编码
+# 线程收尾可能死锁 → finalize 没跑完 → parquet 损坏 → 整批数据丢(踩过一次,丢了 27 条)。
+# 默认关 = 每条 save 阻塞把视频编完(~10-16s)才返回,慢但安全:退出时无 backlog、秒退、不丢数据。
+if [ "${STREAM_ENCODE:-0}" = "1" ]; then
+  OPT_ARG+=(--dataset.streaming_encoding=true --dataset.encoder_threads="${ENC_THREADS:-4}")
 fi
 # 非阻塞相机:默认开(29.9→76.9Hz,已验证)。NONBLOCK=0 回退官方阻塞 async_read
 [ "${NONBLOCK:-1}" = "0" ] && OPT_ARG+=(--robot.cameras_nonblocking=false)
